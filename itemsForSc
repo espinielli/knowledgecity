@@ -1,0 +1,189 @@
+#!/bin/sh
+# **itemsForSc** provides a list of checkin items in a SYSTEM associated with
+# an SCID identifier.
+
+# Usage
+# -----
+
+# This tells bash that it should exit the script if any statement
+# returns a non-true return value.
+set -e
+
+# This is a debug facility for shell scripts: if you set `_DEBUG="on"`
+# you'll see debug info...look for `DEBUG` function use below.
+_DEBUG=${_DEBUG:-"off"}
+function DEBUG()
+{
+  if [ "x$_DEBUG" == "xon" ]
+  then
+    $@
+  else
+    :
+  fi
+}
+
+# This is one way of handling usage message -- in two steps --:
+#
+# * you write the usage message in a comment -- typically right after
+#   the shebang line -- *BUT*, use a special comment prefix like `#/`
+#   so that it's easy to pull these lines out.
+#   Only comment lines padded with a space are considered documentation.
+#   A `#` followed by any other character is considered code.
+#
+#/usage: itemForSC [ options ] scid [system]
+#/
+#/  Output checked-in items associated with SCID (fo SYSTEM only if specified.)
+#/
+#/   scid     Software Change ID, i.e. SC_062873
+#/   system   Baseline System of the item, i.e. TACT
+#/
+#/Options:
+#/   -s c     use character 'c' as value separator (default ',')
+#/   -h       print headings at beginning and exit (default if off)
+#/   -i       print SC_ID as well
+#/   -a       print both headings and data
+#/   --help   print an help/usage message
+#/
+#/Given a Software Change Identifier, 'scid' and eventually a 'system' name,
+#/output the relevant checked-in items associated with the SC.
+#/
+#/Example:
+#/ Only print headings with non-default separator (any SC value is ignored):
+#/ $itemsForSc -h -s '#'
+#/ Baseline System#Baseline Subsystem#Baseline Number#Item System#Item Subsystem#Path#File Name
+#/
+#/ Print all checkedin items associated with SC and headings (separate '@'):
+#/  $itemsForSc -s '@' -a SC_056757
+#/  'Baseline System'@'Baseline Subsystem'@'Baseline Number'@'Item System'@'Item Subsystem'@'Path'@'File Name'
+#/  CFMUTEST@CFMUTEST_CONFIG@15.0.134@TACT@TACOT_SCR@sources/casa@test_casa_slot_list_delay.reglistdisplay.templ
+#/  ...
+#/  CFMUTEST@CFMUTEST_CONFIG@15.0.134@TACT@TACOT_SCR@sources/casa@undef
+#/
+#/ Print comma-separated items for SC:
+#/  $itemsForSc SC_056757
+#/  CFMUTEST,CFMUTEST_CONFIG,15.0.134,TACT,TACOT_SCR,sources/casa,test_casa_slot_list_delay.reglistdisplay.templ
+#/  ...
+#/  CFMUTEST,CFMUTEST_CONFIG,15.0.134,TACT,TACOT_SCR,sources/casa,undef
+#
+#  * the second part of the usage message technique: `grep` yourself
+#    for the usage message comment prefix and then cut off the first few
+#    characters so that everything lines up.
+expr -- "$*" : ".*--help" >/dev/null && {
+    grep '^#/' <"$0" | cut -c3-
+    exit 0
+}
+
+# by default print all (headings and values) is off
+a=${a:-f}
+# ...and do not repeat the SC_ID
+i=${i:-f}
+
+# process command line options
+while getopts "ahis:" OPTION
+do
+  case $OPTION in
+    s) s=$OPTARG;;
+    h) h=t;;
+    a) a=t;;
+    i) i=t;;
+    ?) $0 --help; exit 1 ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+# separator is comma by default
+s=${s:-,}
+
+# print headings takes print all value if not set
+h=${h:-$a}
+
+# We use a *HERE-DOCUMENT* for printing out all command line options
+DEBUG cat <<EOF
+>> print headings = $h
+>> value separator = $s
+>> print all = $a
+>> print SC_ID = $i
+EOF
+
+
+# Check min/max number of input params if headings/all is off/on
+[[ ("$a" == "t") || ($h == "f") ]] && [[ (( $# < 1 )) || (( $# > 2 )) ]] && \
+  echo "Error: too many (few) parameters; min (max) is 1 (2); $# provided!" 1>&2 && exit 1
+
+# Here we read the input values and/or set their defaults.
+s=${s:-,}
+scid=${1:-SC_00000}
+sys=${2:-ALL}
+
+
+# This is the Remedy script query to run (the timestamps are **NOT** as per
+# Advanced Search in GUI)
+if [ "$sys" == "ALL" ]
+then
+  query="'SC ID' = \"${scid}\""
+else
+  query="'SC ID' = \"${scid}\" AND 'Baseline System' = \"${sys}\""
+fi
+
+DEBUG cat <<EOF
+>> separator = $s
+>> SC_ID = $scid
+>> SYSTEM = $sys
+>> Remedy query = $query
+EOF
+
+# these are the attributes we want to retrieve
+[[ $i == "t"  ]] && ff+="@Change Id"
+ff+="@Baseline System"
+ff+="@Baseline Subsystem"
+ff+="@Baseline Number"
+ff+="@Item System"
+ff+="@Item Subsystem"
+ff+="@Path"
+ff+="@File Name"
+
+#remove leading '@'
+ff=${ff##@}
+# if headings option is on
+if [ "$h" == "t" ]
+then
+  IFS=@
+  for foo in ${ff}
+  do
+    stri+="${foo}$s"
+  done
+  # print all but last separator
+  echo "${stri%%$s}"
+  # ...and exit if only headings are requested
+  [[ "$a" == "f" ]] && exit 0
+  stri=""
+fi
+
+
+# Finally run the underlying utility `Crun_remedy_query`
+Crun_remedy_query -schema 'CFMU:SC_Baseline' \
+  -query "$query" \
+  -field 'Baseline System' \
+  -field 'Baseline Subsystem' \
+  -field 'Baseline Number' \
+  -field 'Item System' \
+  -field 'Item Subsystem' \
+  -field 'Path' \
+  -field 'File Name' \
+  -verbose | (
+  # concatenate all the fields
+  typeset -i j=0
+  while read f
+  do
+    stri+="$f$s"
+    (( j++ ))
+    if (( $j == 7 ))
+    then
+      # emit all but last separator
+      [[ $i == "t" ]] && stri="$scid$s$stri"
+      echo "${stri%%$s}"
+      (( j = 0 ))
+      stri=""
+    fi
+  done
+)

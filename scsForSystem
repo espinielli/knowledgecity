@@ -1,0 +1,105 @@
+#!/bin/sh
+# **scsForSystem** provides a list of SC IDs on SYSTEM for user ACRONYM created between T0 - T1.
+
+# Usage and Prerequisites
+# -----------------------
+
+# This tells bash that it should exit the script if any statement
+# returns a non-true return value.
+set -e
+
+# This is a debug facility for shell scripts: if you set `_DEBUG="on"`
+# you'll see debug info...look for `DEBUG` function use below.
+_DEBUG=${_DEBUG:-"off"}
+function DEBUG()
+{
+  if [ "x$_DEBUG" == "xon" ]
+  then
+    $@
+  else
+    :
+  fi
+}
+
+# This is one way of handling usage message -- in two steps --:
+#
+# * you write the usage message in a comment -- typically right after
+#   the shebang line -- *BUT*, use a special comment prefix like `#/`
+#   so that it's easy to pull these lines out.
+#   Only comment lines padded with a space are considered documentation.
+#   A `#` followed by any other character is considered code.
+#
+#/ Usage: scsForSystem ACRONYM SYSTEM [T0 [T1]]
+#/ Query software changes for user ACRONYM in system SYSTEM created between T0 and T1 timestamps.
+#/    ACRONYM  trigram of user, i.e. WAO
+#/    SYSTEM   system in CM, i.e. TACT
+#/    T0       FROM creation date, default 2011/01/01
+#/    T1       TILL creation date, default 2011/02/01
+#/
+#/ This script reads an ACRONYM user identifier, a SYSTEM name and optionally two timestamps
+#/ and then writes to stdout the result of running the following Remedy query
+#/ (on CFMU:Software_Change schema):
+#/    'System' = "SYSTEM" AND \
+#/          (('Date & Time' >= "T0") AND ('Date & Time' <= "T1")) AND \
+#/          ('Originator' = "ACRONYM" OR 'Responsible' = "ACRONYM")
+#/
+#/ Example:
+#/       $ scsForSystem bls TACT
+#/       # SC_056729
+#/       System=TACT
+#/       Originator=BLS
+#/       Responsible=BLS
+#/       Change Id=SC_056729
+#/       ...
+#/       # SC_056582
+#/       System=TACT
+#/       Originator=BLS
+#/       Responsible=BLS
+#/       Change Id=SC_056582
+#
+#  * the second part of the usage message technique: `grep` yourself
+#    for the usage message comment prefix and then cut off the first few
+#    characters so that everything lines up.
+expr -- "$*" : ".*--help" >/dev/null && {
+    grep '^#/' <"$0" | cut -c4-
+    exit 0
+}
+
+# Check min/max number of input params
+[[ (( $# < 2 )) || (( $# > 4 )) ]] && \
+  echo "Error: $(basename $0) accepts a min (max) of 2 (4) parameters, $# provided!"  1>&2 && exit 1
+
+trigram=$(echo $1 | tr "[:lower:]" "[:upper:]")
+DEBUG echo "users's acronym = $trigram"
+
+system=$(echo $2 | tr "[:lower:]" "[:upper:]")
+DEBUG echo "system name = $system"
+
+# **NOTE** the date format has to be `YYYY/MM/DD`
+t0=${3:-'2011/01/01'}
+t1=${4:-'2011/02/01'}
+# This is a way to avoid multiple `echo`'s and use instead a *HERE-DOCUMENT*
+DEBUG cat <<EOF
+FROM creation date = $t0
+TILL creation date = $t1
+EOF
+
+# **TODO**: I should check for correctness of timestamps, i.e. `T0` < `T1`
+
+# the Remedy query to run is
+query="('System'=\"${system}\") AND \
+                      (('Date & Time' >= \"${t0}\") AND ('Date & Time' < \"${t1}\")) AND \
+                      (('Originator' = \"${trigram}\") OR ('Responsible' = \"${trigram}\"))"
+
+#  Let's print the query, should we need it...
+DEBUG echo "Remedy script query (beware of timestamp format!) = $query"
+
+# Finally run the underlying utility `Crun_remedy_query`
+Crun_remedy_query \
+     -schema 'CFMU:Software_Change' \
+     -query  "$query" \
+     -field 'System' \
+     -field 'Originator' \
+     -field 'Responsible' \
+     -field 'Change Id' \
+     -verbose -verbose

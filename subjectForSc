@@ -1,0 +1,98 @@
+#!/bin/bash
+# **subjectForSc** lists the CR/I2/Topic the SC is linked to.
+
+# Usage
+# -----
+
+# This tells bash that it should exit the script if any statement
+# returns a non-true return value.
+set -e
+
+# This is a debug facility for shell scripts: if you set `_DEBUG="on"`
+# you'll see debug info...look for `DEBUG` function use below.
+_DEBUG=${_DEBUG:-"off"}
+function DEBUG()
+{
+  if [ "x$_DEBUG" == "xon" ]
+  then
+    $@
+  else
+    :
+  fi
+}
+
+# This is one way of handling usage message -- in two steps --:
+#
+# * you write the usage message in a comment -- typically right after
+#   the shebang line -- *BUT*, use a special comment prefix like `#/`
+#   so that it's easy to pull these lines out.
+#   Only comment lines padded with a space are considered documentation.
+#   A `#` followed by any other character is considered code.
+#
+#/ Usage: subjectForSC [--help] [SCID]
+#/ Query the SCID for linked I2/CR/Topic.
+#/
+#/ This script reads an SCID identifier and then writes
+#/ to stdout the result of running the following Remedy query
+#/ (on CFMU:Software_Change):
+#/    'Change Id' = "SCID"
+#/
+#/ Example:
+#/    $  subjectForSc SC_061087
+#/    # SC_061087
+#/    CR Reference=CR_032897
+#/    I2 Reference=undef
+#/    Topic=FB503
+
+#
+#
+#  * the second part of the usage message technique: `grep` yourself
+#    for the usage message comment prefix and then cut off the first few
+#    characters so that everything lines up.
+expr -- "$*" : ".*--help" >/dev/null && {
+    grep '^#/' <"$0" | cut -c4-
+    exit 0
+}
+
+# Check min/max number of input params
+[[ (( $# < 1 )) || (( $# > 1 )) ]] && \
+  echo "Error: $(basename $0) accepts a min (max) of 1 (1) parameters, $# provided!"  1>&2 && exit 1
+
+scid=${1}
+query="'Change Id' = \"${scid}\""
+
+#  Let's print the query, should we need it...
+DEBUG echo "Remedy script query (beware of timestamp format!) = $query"
+
+# Finally run the underlying utility `Crun_remedy_query`
+typeset -a arr
+typeset -i c=0
+Crun_remedy_query -schema 'CFMU:Software_Change' \
+  -query "$query" \
+  -field 'CR Reference' \
+  -field 'I2 Reference' \
+  -field 'Topic' \
+  -verbose -verbose | (while read l
+do
+  arr[$c]=$l
+  (( c++ ))
+done
+
+crid=$(echo ${arr[1]} | cut -f 2 -d=)
+topic=$(echo ${arr[3]} | cut -f 2 -d=)
+if [ $(echo ${crid} | cut -c0-3) == "CR_" ]
+then
+  if [ "$topic" == "undef" ]
+  then
+    # 'manually' retrieve topic from CR
+    topic=$(Crun_remedy_query -schema 'CFMU:Change_Request' \
+      -query "'CR-ID' = \"${crid}\"" \
+      -field 'Topic' \
+      -verbose)
+  fi
+fi
+echo ${arr[0]}
+echo ${arr[1]}
+echo ${arr[2]}
+echo "Topic=$topic"
+)

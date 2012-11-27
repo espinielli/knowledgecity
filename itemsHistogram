@@ -1,0 +1,89 @@
+#!/bin/sh
+# **itemsHistogram** provides a list of checkin items in a SYSTEM
+# and the number of their associated SCs
+
+# Usage
+# -----
+
+# This tells bash that it should exit the script if any statement
+# returns a non-true return value.
+set -e
+
+# This is a debug facility for shell scripts: if you set `_DEBUG="on"`
+# you'll see debug info...look for `DEBUG` function use below.
+_DEBUG=${_DEBUG:-"off"}
+function DEBUG()
+{
+  if [ "x$_DEBUG" == "xon" ]
+  then
+    $@
+  else
+    :
+  fi
+}
+
+# This is one way of handling usage message -- in two steps --:
+#
+# * you write the usage message in a comment -- typically right after
+#   the shebang line -- *BUT*, use a special comment prefix like `#/`
+#   so that it's easy to pull these lines out.
+#   Only comment lines padded with a space are considered documentation.
+#   A `#` followed by any other character is considered code.
+#
+#/ Usage: itemsHistogram ForSC [--help] [ACRONYM SYSTEM [T0 [T1]]]
+#/ Histogram for items baselined with SCs worked by user ACRONYM during period T0 - T1.
+#/    ACRONYM  trigram of user, i.e. WAO
+#/    SYSTEM   system in CM, i.e. TACT
+#/    T0       FROM creation date, default 2011/01/01
+#/    T1       TILL creation date, default 2011/02/01
+#/
+#/ Example:
+#/    $ itemsHistogram LAU CUA '2011/01/01' '2012/01/01'
+#
+#
+#  * the second part of the usage message technique: `grep` yourself
+#    for the usage message comment prefix and then cut off the first few
+#    characters so that everything lines up.
+expr -- "$*" : ".*--help" >/dev/null && {
+    grep '^#/' <"$0" | cut -c4-
+    exit 0
+}
+
+# Check min/max number of input params
+[[ (( $# < 2 )) || (( $# > 4 )) ]] && \
+  echo "Error: $(basename $0) accepts a min (max) of 2 (4) parameters, $# provided!"  1>&2 && exit 1
+
+# Collect input parameters and/or assign defaults
+trigram=$(echo $1 | tr "[:lower:]" "[:upper:]")
+DEBUG echo "users's acronym = $trigram"
+
+system=$(echo $2 | tr "[:lower:]" "[:upper:]")
+DEBUG echo "system name = $system"
+
+# **NOTE** the date format has to be `YYYY/MM/DD`
+t0=${3:-'2011/01/01'}
+t1=${4:-'2011/02/01'}
+# This is a way to avoid multiple `echo`'s and use instead a *HERE-DOCUMENT*
+DEBUG cat <<EOF
+FROM creation date = $t0
+TILL creation date = $t1
+EOF
+
+scs=$(scsForSystem $trigram $system $t0 $t1 | grep -e '^#' | sed -e 's/^# //g' | sort)
+DEBUG echo "SCs = $scs"
+
+for s in $scs
+do
+  itemsForSc $s $system | grep -v -e '^#' | itemPath
+  #| sort  | uniq -c | sort -u -b -n -r -k 2
+done | sort | uniq -c | sort -nr
+
+# awk 'NR==1{scale=$1/50} \
+#      {printf("\n%-23s ",$0) ; \
+#       for (i = 0; i<($1/scale) ; i++) {
+#           printf("*")}; \
+#       }' | head -50
+
+# Filenames from where dictionary should be extracted (with reference to
+# BagOfWords as in http://archive.ics.uci.edu/ml/datasets/Bag+of+Words ?)
+#     cat LAU2011| sed -e 's/[ ][ ]*/ /g' | sed -e 's@.*/@@g' | sed -e 's/\(.*\)\..*$/\1/g'

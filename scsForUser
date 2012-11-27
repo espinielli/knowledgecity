@@ -1,0 +1,196 @@
+#!/bin/sh
+# **scForUser** provides a list of SC IDs for user ACRONYM created within time interval provided.
+
+# Usage and Prerequisites
+# -----------------------
+
+# This tells bash that it should exit the script if any statement
+# returns a non-true return value.
+set -e
+
+# This is a debug facility for shell scripts: if you set `_DEBUG="on"`
+# you'll see debug info...look for `DEBUG` function use below.
+_DEBUG=${_DEBUG:-"off"}
+function DEBUG()
+{
+  if [ "x$_DEBUG" == "xon" ]
+  then
+    $@
+  else
+    :
+  fi
+}
+
+# This is one way of handling usage message -- in two steps --:
+#
+# * you write the usage message in a comment -- typically right after
+#   the shebang line -- *BUT*, use a special comment prefix like `#/`
+#   so that it's easy to pull these lines out.
+#   Only comment lines padded with a space are considered documentation.
+#   A `#` followed by any other character is considered code.
+#
+#/usage: scsForUser [ options ] acronym [t0 [t1]]
+#/
+#/Query software changes for user ACRONYM created between T0 and T1 timestamps.
+#/  acronym  trigram of user, i.e. WAO
+#/  t0       the timestamp from which to retrieve data, default to 2011/01/01
+#/  t1       the timestamp from which to retrieve data, default to 2011/02/01
+#/
+#/ Output checked-in items associated with SCID (fo SYSTEM only if specified.)
+#/
+#/Options:
+#/   -s c     use character 'c' as value separator (default ',')
+#/   -h       print headings at beginning and exit (default if off)
+#/   -a       print both headings and data
+#/   -i       print checked-in items as well
+#/   --help   print an help/usage message
+#/
+#/Given a user's acronym and eventually an interval,
+#/output the relevant Software Changes the user is either Originator or Responsible
+#/and eventually the checked-in items associated with them.
+#/
+#/Example:
+#/ $ scsForUser -a WAO
+#/ Change Id,System,Originator,Responsible,CR Reference,I2 Reference,Topic,Status
+#/ SC_056757,TACT,WAO,WAO,undef,undef,undef,CLOSED
+#
+#  * the second part of the usage message technique: `grep` yourself
+#    for the usage message comment prefix and then cut off the first few
+#    characters so that everything lines up.
+expr -- "$*" : ".*--help" >/dev/null && {
+    grep '^#/' <"$0" | cut -c3-
+    exit 0
+}
+
+# by default print all (headings and values) is off
+a=${a:-f}
+# by default include items is off
+i=${i:-f}
+
+while getopts "ahis:" OPTION
+do
+  case $OPTION in
+    s) s=$OPTARG;;
+    h) h=t;;
+    a) a=t;;
+    i) i=t;;
+    ?) $0 --help; exit 1 ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+# print headings takes print all value if not set
+h=${h:-$a}
+
+# separator is comma by default
+s=${s:-,}
+
+# We use a *HERE-DOCUMENT* for printing out all command line options
+DEBUG cat <<EOF
+>> print headings = $h
+>> value separator = $s
+>> print all = $a
+>> print items = $i
+EOF
+
+
+# Check min/max number of input params if headings/all is off
+[[ ("$a" == "t") || ($h == "f") ]] && [[ (( $# < 1 )) || (( $# > 3 )) ]] && \
+  echo "Error: too many (few) parameters; min (max) is 1 (3); $# provided!" 1>&2 && exit 1
+
+# Read user trigram and convert it to uppercase, you never know...
+trigram=$(echo $1 | tr "[:lower:]" "[:upper:]")
+
+# Read timestamps and/or set their defaul values
+t0=${2:-'2011/01/01'}
+t1=${3:-'2011/02/01'}
+
+
+# **TODO**: I should check for correctness of timestamps, i.e. `T0` < `T1`
+
+# This the query to run
+query="(('Date & Time' >= \"${t0}\") AND ('Date & Time' <= \"${t1}\")) AND \
+       ('Originator' = \"${trigram}\" OR 'Responsible' = \"${trigram}\")"
+
+# print other interesting parameters
+DEBUG cat <<EOF
+>> users's acronym = $trigram
+>> from creation date = $t0
+>> till creation date = $t1
+>> Remedy query (beware of timestamp format!) = $query"
+EOF
+
+ff+="@Change Id"
+ff+="@Date & Time"
+ff+="@System"
+ff+="@Originator"
+ff+="@Responsible"
+ff+="@CR Reference"
+ff+="@I2 Reference"
+ff+="@Topic"
+ff+="@Status"
+#remove leading '@'
+ff=${ff##@}
+# if headings option is on
+if [ "$h" == "t" ]
+then
+  IFS=@
+  for foo in ${ff}
+  do
+    stri+="${foo}$s"
+  done
+  # headings for items to be included?
+  if [[ "$i" == "t" ]]
+  then
+    stri+="$(itemsForSc -h)$s"
+  fi
+  # print all but last separator
+  echo "${stri%%$s}"
+  # ...and exit if only headings are requested
+  [[ "$a" == "f" ]] && exit 0
+  stri=""
+fi
+
+
+# Finally run the underlying utility `Crun_remedy_query`
+Crun_remedy_query \
+  -schema 'CFMU:Software_Change' \
+  -query "$query" \
+  -field 'Change Id' \
+  -field 'Date & Time' \
+  -field 'System' \
+  -field 'Originator' \
+  -field 'Responsible' \
+  -field 'CR Reference' \
+  -field 'I2 Reference' \
+  -field 'Topic' \
+  -field 'Status' \
+  -verbose | (
+  # concatenate all the fields
+  typeset -i j=0
+  while read f
+  do
+    (( $j == 1 )) && f=$(date -ud @$f +%Y-%m-%dT%T)
+    stri+="$f$s"
+    (( $j == 0 )) && scid=$f
+    (( j++ ))
+    if (( $j == 9 ))
+    then
+      # headings for items to be included?
+      if [[ "$i" == "t" ]]
+      then
+        itemsForSc $scid | (
+          while read r
+          do
+            echo "$stri$r"
+          done
+        )
+      else
+        # emit all but last separator
+        echo "${stri%%$s}"
+      fi
+      (( j = 0 ))
+      stri=""
+    fi
+  done
+)

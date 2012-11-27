@@ -1,0 +1,86 @@
+#!/bin/sh
+# **subjectsForUser** provides for the specified USER a list of SCs
+# and the relevant subjects they are linked to.
+
+# Usage
+# -----
+
+# This tells bash that it should exit the script if any statement
+# returns a non-true return value.
+set -e
+
+# This is a debug facility for shell scripts: if you set `_DEBUG="on"`
+# you'll see debug info...look for `DEBUG` function use below.
+_DEBUG=${_DEBUG:-"off"}
+function DEBUG()
+{
+  if [ "x$_DEBUG" == "xon" ]
+  then
+    $@
+  else
+    :
+  fi
+}
+
+# This is one way of handling usage message -- in two steps --:
+#
+# * you write the usage message in a comment -- typically right after
+#   the shebang line -- *BUT*, use a special comment prefix like `#/`
+#   so that it's easy to pull these lines out.
+#   Only comment lines padded with a space are considered documentation.
+#   A `#` followed by any other character is considered code.
+#
+#/ Usage: subjectsForUser [--help] [ACRONYM [T0 [T1]]]
+#/ List the subjects (I2/CR/Topic) linked to the SCs for user ACRONYM
+#/ worked in the interval T0 - T1.
+#/    ACRONYM  trigram of user, i.e. WAO
+#/    T0       the timestamp from which to retrieve data, default to 2011/01/01
+#/    T1       the timestamp from which to retrieve data, default to 2011/02/01
+#/
+#/ Example:
+#/    $  subjectsForUser LBR '2011/09/01' '2012/06/01'
+#/    # SC_059822
+#/    CR Reference=undef
+#/    I2 Reference=undef
+#/    Topic=undef
+#/    # SC_059873
+#/    CR Reference=CR_032990
+#/    I2 Reference=undef
+#/    Topic=FB208
+#/    ...
+#/    # SC_062967
+#/    CR Reference=undef
+#/    I2 Reference=undef
+#/    Topic=undef
+
+#  * the second part of the usage message technique: `grep` yourself
+#    for the usage message comment prefix and then cut off the first few
+#    characters so that everything lines up.
+expr -- "$*" : ".*--help" >/dev/null && {
+    grep '^#/' <"$0" | cut -c4-
+    exit 0
+}
+
+# Check min/max number of input params
+[[ (( $# < 1 )) || (( $# > 3 )) ]] && \
+  echo "Error: $(basename $0) accepts a min (max) of 1 (3) parameters, $# provided!"  1>&2 && exit 1
+
+userId=${1}
+fromDate=${2:-'2011/01/01'}
+toDate=${3:-'2012/02/01'}
+
+# This is a way to avoid multiple `echo`'s and use instead a *HERE-DOCUMENT*
+DEBUG cat <<EOF
+ACRONYM = $userId
+FROM creation date = $t0
+TILL creation date = $t1
+EOF
+
+scs=$(scsForUser ${userId} ${fromDate} ${toDate} | grep 'Change Id=' | sed 's/Change Id=//' | sort)
+#  Let's print the list of SCs that will be queried...
+DEBUG echo "SCs to be queried = $scs"
+
+for s in $scs
+do
+  subjectForSc $s
+done
