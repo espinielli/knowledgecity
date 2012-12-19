@@ -126,7 +126,7 @@ in component `CORE` of system `TACT` has been 'touched' by `BYG` in
      "a list of  SCs"
 [3]: BaselineItemList.jpg
      "baseline items list for an SC"
-[4]: BaselineItem.jpg
+[4]: https://raw.github.com/espinielli/knowledgecity/master/BaselineItem.jpg
      "a baseline item"
 [5]: scripts.html
      "knowledgecity scripts"
